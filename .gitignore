@@ -1,0 +1,8 @@
+**/.git
+**/.svn
+**/.hg
+**/CVS
+**/.DS_STORE
+**/.vscode
+**/__pycache__
+**/main.py
