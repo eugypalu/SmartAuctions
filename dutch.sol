@@ -1,7 +1,8 @@
 pragma solidity ^0.5.1;
 
-//solgraph
-contract Ducth {
+import "./StrategyInterface.sol";
+
+contract Ducth is StrategyInterface{
     
     address creator;
     uint reservePrice;
@@ -10,6 +11,10 @@ contract Ducth {
     uint startBlock;
     uint endBlock;
     uint actPrice;
+    
+    bytes32 decreaseMethodName;
+    
+    mapping (bytes32 => address) decreaseMethod;
     
     modifier onlyCreator(){
         require(msg.sender == creator);
@@ -21,7 +26,7 @@ contract Ducth {
         _;
     }
     
-    constructor(uint _resPrice, uint _sPrice, uint _duration) public{
+    constructor(uint _resPrice, uint _sPrice, uint _duration, string memory _decreaseMethodName) public{
         require(_resPrice > uint(0));
         require(_sPrice > uint(0));
         require(_duration > uint(0));
@@ -31,6 +36,9 @@ contract Ducth {
         creator = msg.sender;
         startBlock = block.number;
         endBlock = block.number + (_duration -1);
+        
+        bytes32 methodName = stringToBytes(_decreaseMethodName);
+        decreaseMethodName = methodName;
         //TODO aggiungere opzione di decremento
     }
     
@@ -58,48 +66,21 @@ contract Ducth {
     function getActualPrice() public view returns(uint){
         return actPrice;
     }
-    
-    //----------------------------------linearDecrease--------------------------
-    //decresce dal prezzo di partenza fino al prezzo di riserva ad intervalli regolari fino all'ultimo blocco in cui l'offerta è ancora valida
-    
-    
-    function priceDecrease() private returns(uint){
-        return startPrice - reservePrice;
+
+    function addDecreaseMethod(string memory _methodName, address _methodAddress) onlyCreator public {
+        bytes32 methodName = stringToBytes(_methodName);
+        decreaseMethod[methodName] = _methodAddress;
     }
     
-    function linearDecrease() private returns(uint) {
-        uint pDecrease = priceDecrease();
-        return pDecrease/blockDuration;
+    function getMethodAddress(string memory _methodName) onlyCreator public view returns(address){
+        bytes32 methodName = stringToBytes(_methodName);
+        return decreaseMethod[methodName];
     }
-    
-    function actualPriceLin() public returns(uint){
-        uint pastBlock = block.number - startBlock;
-        uint linDecr = linearDecrease();
-        actPrice = startPrice - (pastBlock * linDecr);
-        return actPrice;
-        
+
+    function updateContractDecreasseMethod(string memory _methodName) onlyCreator public{
+        //TODO Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
     }
-    //-------------------------------------------------------------------------
-    
-    //----------------------------------percDecrease--------------------------
-    //calcolo in percentuale uanto è passato tra 2 blocchi e riduco il prezzo di quella percentuale
-    
-    function passedBlock() public returns(uint){
-        return startBlock - block.number;
-    }
-    
-    function percBlock() public returns(uint){
-        uint pass = passedBlock();
-        uint perc = pass * 100 / blockDuration;
-        return 100 - perc;
-    }
-    
-    function actualPricePerc() public returns(uint){
-        uint perc = percBlock();
-        return startPrice * perc / 100;
-    }
-    
-    //-------------------------------------------------------------------------
+
     
     function bid() inTime public payable{
         //TODO vedere come rendere pagabile
@@ -108,6 +89,14 @@ contract Ducth {
     
     function closeContract() public{
         selfdestruct(address(0));
+    }
+    
+    function stringToBytes(string memory _s) private pure returns (bytes32){
+        bytes32 result;
+        assembly {
+            result := mload(add(_s, 32))
+        }
+        return result;
     }
     
 }
