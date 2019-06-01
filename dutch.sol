@@ -1,10 +1,13 @@
 pragma solidity ^0.5.1;
 
 import "./StrategyInterface.sol";
+import "./LinearDecrease.sol";
+import "./PercDecrease.sol";
 
 contract Ducth is StrategyInterface{
     
     address creator;
+    
     uint reservePrice;
     uint startPrice;
     uint blockDuration;
@@ -12,12 +15,19 @@ contract Ducth is StrategyInterface{
     uint endBlock;
     uint actPrice;
     
-    bytes32 decreaseMethodName;
-    
-    mapping (bytes32 => address) decreaseMethod;
+    //instance of contract for the decrease of the price
+    PercDecrease pDec;
+    LinearDecrease lDec;
+
+    uint decreaseMethod; //0 for linearDecrease 1 for PercDecrease
     
     modifier onlyCreator(){
         require(msg.sender == creator);
+        _;
+    }
+    
+    modifier onlyExistentMethod(uint _methodName){
+        require(_methodName >= 0 && _methodName <= 1);
         _;
     }
     
@@ -26,7 +36,7 @@ contract Ducth is StrategyInterface{
         _;
     }
     
-    constructor(uint _resPrice, uint _sPrice, uint _duration, string memory _decreaseMethodName) public{
+    constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod) public{
         require(_resPrice > uint(0));
         require(_sPrice > uint(0));
         require(_duration > uint(0));
@@ -36,10 +46,9 @@ contract Ducth is StrategyInterface{
         creator = msg.sender;
         startBlock = block.number;
         endBlock = block.number + (_duration -1);
-        
-        bytes32 methodName = stringToBytes(_decreaseMethodName);
-        decreaseMethodName = methodName;
-        //TODO aggiungere opzione di decremento
+        pDec = new PercDecrease();
+        lDec = new LinearDecrease();
+        decreaseMethod = _decreaseMethod;
     }
     
     function getStart() public view returns(uint){
@@ -67,21 +76,26 @@ contract Ducth is StrategyInterface{
         return actPrice;
     }
 
-    function addDecreaseMethod(string memory _methodName, address _methodAddress) onlyCreator public {
-        bytes32 methodName = stringToBytes(_methodName);
-        decreaseMethod[methodName] = _methodAddress;
+    function actualPrice(uint _reservePrice, uint _startPrice, uint _blockDuration, uint _startBlock, uint _endBlock) public returns(uint){
+        //TODO Vorrei un qualcosa di dinamico, questo non mi piace
+        //TODO non mi piace nemmeno che non posso aggiungere metodi di decrease in corsa
+        if (decreaseMethod == 0)
+            actPrice = lDec.actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+        else if (decreaseMethod == 1)
+            actPrice = pDec.actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
     }
     
-    function getMethodAddress(string memory _methodName) onlyCreator public view returns(address){
-        bytes32 methodName = stringToBytes(_methodName);
-        return decreaseMethod[methodName];
-    }
-
-    function updateContractDecreasseMethod(string memory _methodName) onlyCreator public{
+    function updateContractDecreasseMethod(uint _methodName) onlyCreator onlyExistentMethod(_methodName) public{
         //TODO Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
+        decreaseMethod = _methodName;
     }
-
     
+    /*
+    Può essere implementata in 2 modi:
+    -1) il prezzo variabile è visibile a tutti e quindi basta fare un bid al prezzo attuale
+    -2) è visibile solo il prezzo iniziale, a questo punto viene fatta la bid con il prezzo che si è disposti
+    a pagare, se è superiore o uguale a quello attuale l'offerta è buona, altrimenti no
+    */
     function bid() inTime public payable{
         //TODO vedere come rendere pagabile
         //TODO fare in modo che chi fa la bid sposti prma soldi su escrow e triangolare le cose
@@ -100,3 +114,21 @@ contract Ducth is StrategyInterface{
     }
     
 }
+
+
+
+/*
+    function addDecreaseMethod(string memory _methodName, address _methodAddress) onlyCreator public {
+        bytes32 methodName = stringToBytes(_methodName);
+        decreaseMethod[methodName] = _methodAddress;
+    }
+    
+    function getMethodAddress(string memory _methodName) onlyCreator public view returns(address){
+        bytes32 methodName = stringToBytes(_methodName);
+        return decreaseMethod[methodName];
+    }
+
+    function updateContractDecreasseMethod(string memory _methodName) onlyCreator public{
+        //TODO Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
+    }
+*/    
