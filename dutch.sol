@@ -15,6 +15,9 @@ contract Ducth is StrategyInterface{
     uint endBlock;
     uint actPrice;
     
+    uint soldPrice = 0;
+    address soldUser;
+    
     //instance of contract for the decrease of the price
     PercDecrease pDec;
     LinearDecrease lDec;
@@ -33,6 +36,11 @@ contract Ducth is StrategyInterface{
     
     modifier inTime(){
         require(block.number <= endBlock);
+        _;
+    }
+    
+    modifier onSale(){
+        require(soldPrice == 0);
         _;
     }
     
@@ -80,9 +88,9 @@ contract Ducth is StrategyInterface{
         //TODO Vorrei un qualcosa di dinamico, questo non mi piace
         //TODO non mi piace nemmeno che non posso aggiungere metodi di decrease in corsa
         if (decreaseMethod == 0)
-            actPrice = lDec.actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+            actPrice = lDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
         else if (decreaseMethod == 1)
-            actPrice = pDec.actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+            actPrice = pDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
     }
     
     function updateContractDecreasseMethod(uint _methodName) onlyCreator onlyExistentMethod(_methodName) public{
@@ -96,9 +104,14 @@ contract Ducth is StrategyInterface{
     -2) è visibile solo il prezzo iniziale, a questo punto viene fatta la bid con il prezzo che si è disposti
     a pagare, se è superiore o uguale a quello attuale l'offerta è buona, altrimenti no
     */
-    function bid() inTime public payable{
+    function bid() inTime onSale public payable{
         //TODO vedere come rendere pagabile
         //TODO fare in modo che chi fa la bid sposti prma soldi su escrow e triangolare le cose
+        actPrice = actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+        require(actPrice <= msg.value);
+        soldUser = msg.sender;
+        soldPrice = msg.value;
+        //TODO testare
     }
     
     function closeContract() public{
