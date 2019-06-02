@@ -46,6 +46,10 @@ contract Ducth is StrategyInterface{
         _;
     }
     
+    event bidAccepted(address user, uint price, uint block);
+    event bidSent(address user, uint price, uint block);
+    event dutchCreated(address contractAddress, uint block);
+    
     constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod) public{
         require(_resPrice > uint(0));
         require(_sPrice > uint(0));
@@ -59,6 +63,7 @@ contract Ducth is StrategyInterface{
         pDec = new PercDecrease();
         lDec = new LinearDecrease();
         decreaseMethod = _decreaseMethod;
+        emit dutchCreated(address(this), block.number);
     }
     
     function getStart() public view returns(uint){
@@ -117,9 +122,12 @@ contract Ducth is StrategyInterface{
     */
     function bid() inTime onSale public payable{
         actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+        emit bidSent(msg.sender, msg.value, block.number);
         require(actPrice <= msg.value && msg.value > 0);
         soldUser = msg.sender;
         soldPrice = msg.value;
+        emit bidAccepted(msg.sender, msg.value, block.number);
+        //TODO MANDARE SOLDI AL VENDITORE
     }
     
     function closeContract() public{
