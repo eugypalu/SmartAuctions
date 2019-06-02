@@ -6,6 +6,8 @@ import "./PercDecrease.sol";
 
 contract Ducth is StrategyInterface{
     
+    //TODO Decidere dove aggiungere gli event, sicuramente su bid
+    
     address creator;
     
     uint reservePrice;
@@ -80,10 +82,11 @@ contract Ducth is StrategyInterface{
         return creator;
     }
     
-    function getActualPrice() public view returns(uint){
+    function getActualPrice() onlyCreator public view returns(uint){
         return actPrice;
     }
-
+    
+    //??? TODO NON VA BENE CHE QUESTO SIA PUBBLICO????
     function actualPrice(uint _reservePrice, uint _startPrice, uint _blockDuration, uint _startBlock, uint _endBlock) public returns(uint){
         //TODO Vorrei un qualcosa di dinamico, questo non mi piace
         //TODO non mi piace nemmeno che non posso aggiungere metodi di decrease in corsa
