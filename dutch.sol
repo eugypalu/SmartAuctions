@@ -15,7 +15,7 @@ contract Ducth is StrategyInterface{
     uint endBlock;
     uint actPrice;
     
-    uint soldPrice = 0;
+    uint soldPrice;
     address soldUser;
     
     //instance of contract for the decrease of the price
@@ -98,6 +98,14 @@ contract Ducth is StrategyInterface{
         decreaseMethod = _methodName;
     }
     
+    function getWinnerAddress() public view returns(address){
+        return soldUser;
+    }
+    
+    function getWinnerAmount() public view returns(uint){
+        return soldPrice;
+    }
+    
     /*
     Può essere implementata in 2 modi:
     -1) il prezzo variabile è visibile a tutti e quindi basta fare un bid al prezzo attuale
@@ -105,13 +113,10 @@ contract Ducth is StrategyInterface{
     a pagare, se è superiore o uguale a quello attuale l'offerta è buona, altrimenti no
     */
     function bid() inTime onSale public payable{
-        //TODO vedere come rendere pagabile
-        //TODO fare in modo che chi fa la bid sposti prma soldi su escrow e triangolare le cose
-        actPrice = actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
-        require(actPrice <= msg.value);
+        actualPrice(reservePrice, startPrice, blockDuration, startBlock, endBlock);
+        require(actPrice <= msg.value && msg.value > 0);
         soldUser = msg.sender;
         soldPrice = msg.value;
-        //TODO testare
     }
     
     function closeContract() public{
@@ -127,8 +132,6 @@ contract Ducth is StrategyInterface{
     }
     
 }
-
-
 
 /*
     function addDecreaseMethod(string memory _methodName, address _methodAddress) onlyCreator public {
