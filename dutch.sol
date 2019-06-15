@@ -2,27 +2,34 @@ pragma solidity ^0.5.1;
 
 import "./StrategyInterface.sol";
 import "./LinearDecrease.sol";
+import "./MyArtSale.sol";
 import "./PercDecrease.sol";
 
-contract Ducth is StrategyInterface{
+contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
     
-    //TODO Decidere dove aggiungere gli event, sicuramente su bid
-    
-    address creator;
+    using SafeMath for uint256;
+
+    address payable creator;
     
     uint reservePrice;
     uint startPrice;
+    
     uint blockDuration;
     uint startBlock;
     uint endBlock;
+    
     uint actPrice;
     
     uint soldPrice;
     address soldUser;
     
+    uint tokenId;
     //instance of contract for the decrease of the price
     PercDecrease pDec;
     LinearDecrease lDec;
+    //utilityToken ut;
+    
+    MyArtSale mas = MyArtSale(0xF76C52ea2a85D2d38020ceA80C918e8f7499C491);
 
     uint decreaseMethod; //0 for linearDecrease 1 for PercDecrease
     
@@ -41,16 +48,35 @@ contract Ducth is StrategyInterface{
         _;
     }
     
+    modifier isUpdatable(){
+        require(startBlock == 0);
+        _;
+    }
+    
     modifier onSale(){
         require(soldPrice == 0);
+        _;
+    }
+    
+    modifier tokenArrived(){
+        require(balanceOf(address(this)) > 0);
+        _;
+    }
+    
+    modifier auctionClosed(){
+        //TODO asta finita oppure token venduto
+        require(block.number > endBlock || soldPrice > 0);
         _;
     }
     
     event bidAccepted(address user, uint price, uint block);
     event bidSent(address user, uint price, uint block);
     event dutchCreated(address contractAddress, uint block);
+    event auctionStart(uint block);
+    event auctionClose(uint block, address soldUser, uint soldPrice);
+    event methodUpdate(uint block, uint prevMethod, uint actualMethod);
     
-    constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod) public{
+    constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod, uint _tokenId) public{
         require(_resPrice > uint(0));
         require(_sPrice > uint(0));
         require(_duration > uint(0));
@@ -58,12 +84,21 @@ contract Ducth is StrategyInterface{
         startPrice  = _sPrice;
         blockDuration = _duration;
         creator = msg.sender;
-        startBlock = block.number;
-        endBlock = block.number + (_duration -1);
+        tokenId = _tokenId;
+        //startBlock = block.number;
+        //endBlock = block.number + (_duration -1);
         pDec = new PercDecrease();
         lDec = new LinearDecrease();
+        //ut = new utilityToken();
+        //mas = MyArtSale(0xf763CcD48BCe953E21CA15c934691000fFfcfc89);
         decreaseMethod = _decreaseMethod;
         emit dutchCreated(address(this), block.number);
+    }
+    
+    function startAuction() tokenArrived public{
+        startBlock = block.number;
+        endBlock = block.number.add((blockDuration.sub(1)));
+        emit auctionStart(block.number);
     }
     
     function getStart() public view returns(uint){
@@ -92,7 +127,7 @@ contract Ducth is StrategyInterface{
     }
     
     //??? TODO NON VA BENE CHE QUESTO SIA PUBBLICO????
-    function actualPrice(uint _reservePrice, uint _startPrice, uint _blockDuration, uint _startBlock, uint _endBlock) public returns(uint){
+    function actualPrice(uint _reservePrice, uint _startPrice, uint _blockDuration, uint _startBlock, uint _endBlock) onlyCreator public returns(uint){
         //TODO Vorrei un qualcosa di dinamico, questo non mi piace
         //TODO non mi piace nemmeno che non posso aggiungere metodi di decrease in corsa
         if (decreaseMethod == 0)
@@ -101,8 +136,9 @@ contract Ducth is StrategyInterface{
             actPrice = pDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
     }
     
-    function updateContractDecreasseMethod(uint _methodName) onlyCreator onlyExistentMethod(_methodName) public{
-        //TODO Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
+    function updateContractDecreasseMethod(uint _methodName) isUpdatable onlyCreator onlyExistentMethod(_methodName) public{
+        //Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
+        emit methodUpdate(block.number, decreaseMethod, _methodName);
         decreaseMethod = _methodName;
     }
     
@@ -127,11 +163,16 @@ contract Ducth is StrategyInterface{
         soldUser = msg.sender;
         soldPrice = msg.value;
         emit bidAccepted(msg.sender, msg.value, block.number);
-        //TODO MANDARE SOLDI AL VENDITORE
     }
     
-    function closeContract() public{
-        selfdestruct(address(0));
+    function payOut() auctionClosed public{
+        transferTo(creator, soldPrice);
+        safeTransferFrom(address(this), soldUser, tokenId);
+        emit auctionClose(block.number, soldUser, soldPrice);
+    }
+    
+    function transferTo(address payable _to, uint _val) private{
+        _to.transfer(_val);
     }
     
     function stringToBytes(string memory _s) private pure returns (bytes32){
@@ -142,20 +183,64 @@ contract Ducth is StrategyInterface{
         return result;
     }
     
-}
-
-/*
-    function addDecreaseMethod(string memory _methodName, address _methodAddress) onlyCreator public {
-        bytes32 methodName = stringToBytes(_methodName);
-        decreaseMethod[methodName] = _methodAddress;
+    //TODO AGGIORNARE
+    //function closeContract() auctionClosed public{
+    function closeContract() public{
+        selfdestruct(address(0));
     }
     
-    function getMethodAddress(string memory _methodName) onlyCreator public view returns(address){
-        bytes32 methodName = stringToBytes(_methodName);
-        return decreaseMethod[methodName];
+    function safeTransferFrom(address _from,address _to,uint256 _tokenId,bytes memory _data) public{
+        mas.safeTransferFrom(_from, _to, _tokenId, _data);
     }
-
-    function updateContractDecreasseMethod(string memory _methodName) onlyCreator public{
-        //TODO Aggiorna il metodo di decremento, possibile solo con quelli aggiunti nella map
+    
+    function safeTransferFrom(address _from,address _to,uint256 _tokenId)public{
+        mas.safeTransferFrom(_from, _to, _tokenId);
     }
-*/    
+    
+    function transferFrom(address _from,address _to,uint256 _tokenId)public{
+        mas.transferFrom(_from, _to, _tokenId);
+    }
+    
+    function approve(address _approved,uint256 _tokenId)public{
+        mas.approve(_approved, _tokenId);
+    }
+    
+    function setApprovalForAll(address _operator,bool _approved)public{
+        mas.setApprovalForAll(_operator, _approved);
+    }
+    
+    function balanceOf(address _owner)public view returns (uint256){
+        return mas.balanceOf(_owner);
+    }
+    
+    function ownerOf(uint256 _tokenId)public view returns (address){
+        return mas.ownerOf(_tokenId);
+    }
+    
+    function getApproved(uint256 _tokenId)public view returns (address){
+        return mas.getApproved(_tokenId);
+    }
+    
+    function isApprovedForAll(address _owner,address _operator)public view returns (bool){
+        mas.isApprovedForAll(_owner, _operator);
+    }
+    
+    function tokenURI() public view returns (string memory){
+        //tokenId è hardcoded in quanto all'utente interessa conoscere solo le info relative al token in questa asta
+        return mas.tokenURI(tokenId);
+    }
+  
+    function tokenDescription() public view returns (string memory){
+        //tokenId è hardcoded in quanto all'utente interessa conoscere solo le info relative al token in questa asta
+        return mas.tokenDescription(tokenId);
+    }
+    
+    function onERC721Received(
+    address, 
+    address, 
+    uint256, 
+    bytes calldata
+    )external returns(bytes4) {
+        return bytes4(keccak256("onERC721Received(address,address,uint256,bytes)"));
+    } 
+}
