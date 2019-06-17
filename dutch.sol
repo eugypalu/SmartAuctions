@@ -2,8 +2,9 @@ pragma solidity ^0.5.1;
 
 import "./StrategyInterface.sol";
 import "./LinearDecrease.sol";
-import "./MyArtSale.sol";
+import "./P2pToken.sol";
 import "./PercDecrease.sol";
+import "./StaticDecrease.sol";
 
 contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
     
@@ -11,96 +12,143 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
 
     address payable creator;
     
-    uint reservePrice;
-    uint startPrice;
+    uint reservePrice; //Reserve price
+    uint startPrice; //initial auction price
     
-    uint blockDuration;
-    uint startBlock;
-    uint endBlock;
+    uint blockDuration; //duration of the auction expressed in blocks
+    uint startBlock; //starting block of the auction
+    uint endBlock; //ending block of the auction
     
-    uint actPrice;
+    uint actPrice; //actual price
     
-    uint soldPrice;
+    uint soldPrice; //user who won the auction
     address soldUser;
     
-    uint tokenId;
-    //instance of contract for the decrease of the price
+    uint tokenId; //tokenid of the auction
+    
+    //contract for the decrease of the price
     PercDecrease pDec;
     LinearDecrease lDec;
-    //utilityToken ut;
-    
-    MyArtSale mas = MyArtSale(0xF76C52ea2a85D2d38020ceA80C918e8f7499C491);
+    StaticDecrease sDec;
 
-    uint decreaseMethod; //0 for linearDecrease 1 for PercDecrease
+    //contract that manages the token
+    P2pToken mas = P2pToken(0xf8CA4fE2B0cA1Ef0537b5C1176c85B516a2446E4);
+
+    uint decreaseMethod; //0 for linearDecrease 1 for PercDecrease 2 for staticdecrease
     
+    /**
+     * Controlla se la funzione viene chiamata dal creator
+     **/ 
     modifier onlyCreator(){
         require(msg.sender == creator);
         _;
     }
     
+    /**
+     * Controlla se il metodo scelto è tra quelli esistenti
+     **/
     modifier onlyExistentMethod(uint _methodName){
-        require(_methodName >= 0 && _methodName <= 1);
+        require(_methodName >= 0 && _methodName <= 2);
         _;
     }
     
+    /**
+     * Controlla se la funzione viene chiamata nell'intervallo di tempo definito dall'utente
+     **/
     modifier inTime(){
         require(block.number <= endBlock);
         _;
     }
     
+    /**
+     * Il creator può modificare il decreaseMethod solo se l'asta non è ancora iniziata 
+     **/
     modifier isUpdatable(){
         require(startBlock == 0);
         _;
     }
     
+    /**
+     * Controlla che l'asta non sia terminata, quindi che il token non sia stato venduto
+     **/
     modifier onSale(){
         require(soldPrice == 0);
         _;
     }
     
+    /**
+     * Controlla che il token sia stato ricevuto
+     **/
     modifier tokenArrived(){
         require(balanceOf(address(this)) > 0);
         _;
     }
     
+    /**
+     * controlla che l'asta sia conclusa
+     **/
     modifier auctionClosed(){
-        //TODO asta finita oppure token venduto
         require(block.number > endBlock || soldPrice > 0);
         _;
     }
     
-    event bidAccepted(address user, uint price, uint block);
-    event bidSent(address user, uint price, uint block);
-    event dutchCreated(address contractAddress, uint block);
+    /**
+     * controlla che i prezzi siano maggiori di 0
+     **/
+    modifier minPrice(uint _resPrice, uint _sPrice){
+        require(_resPrice > 0 && _sPrice > 0);
+        _;
+    }
+    
+    /**
+     * controlla che la durata espressa in blocchi sia magiore di 0
+     **/
+    modifier minDuration(uint _duration){
+        require(_duration > 0);
+        _;
+    }
+    
+    /**
+     * Controlla che l'asta non sia già iniziata
+     **/
+    modifier notAlreadyStarted(){
+        require(startBlock == 0);
+        _;
+    }
+    
+    //Event
+    event bidAccepted(address user, uint price, uint block); 
+    event bidSent(address user, uint price, uint block); 
+    event dutchCreated(address contractAddress, uint block); 
     event auctionStart(uint block);
     event auctionClose(uint block, address soldUser, uint soldPrice);
     event methodUpdate(uint block, uint prevMethod, uint actualMethod);
     
-    constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod, uint _tokenId) public{
-        require(_resPrice > uint(0));
-        require(_sPrice > uint(0));
-        require(_duration > uint(0));
+    constructor(uint _resPrice, uint _sPrice, uint _duration, uint _decreaseMethod, uint _tokenId) minPrice(_resPrice, _sPrice) minDuration(_duration) public{
         reservePrice = _resPrice;
         startPrice  = _sPrice;
         blockDuration = _duration;
         creator = msg.sender;
         tokenId = _tokenId;
-        //startBlock = block.number;
-        //endBlock = block.number + (_duration -1);
-        pDec = new PercDecrease();
-        lDec = new LinearDecrease();
-        //ut = new utilityToken();
-        //mas = MyArtSale(0xf763CcD48BCe953E21CA15c934691000fFfcfc89);
-        decreaseMethod = _decreaseMethod;
-        emit dutchCreated(address(this), block.number);
+        pDec = new PercDecrease(); //decrescita percentuale
+        lDec = new LinearDecrease(); //decrescita LinearDecrease
+        sDec = new StaticDecrease();
+        decreaseMethod = _decreaseMethod; //viene settato il metodo con cui decrementa il prezzo
+        emit dutchCreated(address(this), block.number); //contratto creato
     }
     
-    function startAuction() tokenArrived public{
-        startBlock = block.number;
-        endBlock = block.number.add((blockDuration.sub(1)));
+    /**
+     * l'asta può effettivamente partire solo quando il token viene ricevuto
+     **/
+    function startAuction() onlyCreator tokenArrived notAlreadyStarted public{
+        startBlock = block.number; //setta il blocco di inizio dell'asta
+        endBlock = block.number.add((blockDuration.sub(1))); //blocco in cui l'asta termina ricavato sommando all'inizio la durata
         emit auctionStart(block.number);
     }
     
+    /**
+     * restituisce il blocco in cui l'asta inizia
+     **/
     function getStart() public view returns(uint){
         return startBlock;
     }
@@ -134,6 +182,8 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
             actPrice = lDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
         else if (decreaseMethod == 1)
             actPrice = pDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
+        else if (decreaseMethod == 2)
+            actPrice = sDec.actualPrice(_reservePrice, _startPrice, _blockDuration, _startBlock, _endBlock);
     }
     
     function updateContractDecreasseMethod(uint _methodName) isUpdatable onlyCreator onlyExistentMethod(_methodName) public{
@@ -142,11 +192,11 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
         decreaseMethod = _methodName;
     }
     
-    function getWinnerAddress() public view returns(address){
+    function getWinnerAddress() onlyCreator public view returns(address){
         return soldUser;
     }
     
-    function getWinnerAmount() public view returns(uint){
+    function getWinnerAmount() onlyCreator public view returns(uint){
         return soldPrice;
     }
     
@@ -166,9 +216,13 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
     }
     
     function payOut() auctionClosed public{
-        transferTo(creator, soldPrice);
-        safeTransferFrom(address(this), soldUser, tokenId);
-        emit auctionClose(block.number, soldUser, soldPrice);
+        if(soldPrice == 0){
+            safeTransferFrom(address(this), creator, tokenId);
+        }else{
+            transferTo(creator, soldPrice);
+            safeTransferFrom(address(this), soldUser, tokenId);
+            emit auctionClose(block.number, soldUser, soldPrice);
+        }
     }
     
     function transferTo(address payable _to, uint _val) private{
@@ -183,7 +237,7 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
         return result;
     }
     
-    //TODO AGGIORNARE
+    //TODO AGGIORNARE auctionClosed non va bene
     //function closeContract() auctionClosed public{
     function closeContract() public{
         selfdestruct(address(0));
