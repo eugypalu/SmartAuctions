@@ -1,12 +1,13 @@
-pragma solidity ^0.5.1;
+pragma solidity ^0.5.6;
 
-import "./MyArtSale.sol";
+import "./P2pToken.sol";
 
 contract Vickrey is ERC721, ERC721TokenReceiver {
     
     using SafeMath for uint256;
-    MyArtSale mas = MyArtSale(0xF76C52ea2a85D2d38020ceA80C918e8f7499C491);
+    P2pToken mas = P2pToken(0xCFC03245Ca98b26455daB6F27c69DE6F10C1C3C4); //contratto che gestisce i token
     
+    //durata delle fasi dello smart contract    
     struct phase{
         uint256 phase1Duration;
         uint256 phase2Duration;
@@ -22,8 +23,9 @@ contract Vickrey is ERC721, ERC721TokenReceiver {
     }
     
     address payable creator;
-    address payable charityAddress;
+    address payable charityAddress;//address a cui vengono mandati ether in eccesso
     
+    //migliori 2 offerte con relativi address
     struct bestBid{
         uint256 firstBid;
         address payable firstAddress;
@@ -31,71 +33,116 @@ contract Vickrey is ERC721, ERC721TokenReceiver {
         address payable secondAddress;
     }
     
-    uint256 tokenId;
+    uint256 tokenId;//id del token messo all'asta
     
     bestBid bBid;
     phase ph;
     auctionPrice ap;
     
-    //utilityToken ut;
+    mapping (address => bytes32) userToBidCommitment;//mappa utenti con il loro hash
+    mapping (address => uint256) addressToBid; //mappa utenti con la loro offerta
     
-    //address payable [] bidder;
-    
-    mapping (address => bytes32) userToBidCommitment;
-    mapping (address => uint256) addressToBid;
-    
+    /**
+     * Controlla che l'operazione venga eseguita dal creator
+     **/
     modifier onlyCreator(){
         require(msg.sender == creator);
         _;
     }
     
+    /**
+     * Controlla se un utente non ha ancora mandato la bidAccepte
+     **/
     modifier notAlreadyBid(address _usr){
         require(userToBidCommitment[_usr] == 0);
         _;
     }
     
+    /**
+     * Controlla se un utente ha già mandato la bidAccepte
+     **/
     modifier alreadyBid(address _usr){
         require(userToBidCommitment[_usr] != 0);
         _;
     }
     
+    /**
+     * Controlla che il deposito corrisponda al value impostato dall'utente
+     **/
     modifier isDeposit(){
         require(msg.value == ap.depositBid);
         _;
     }
     
+    /**
+     * Controlla che l'operazione avvenga nella giusta fase
+     **/
     modifier onlyOnFirstPhase(){
         require(ph.phase1 >= block.number);
         _;
     }
     
+    /**
+     * Controlla che l'operazione avvenga nella giusta fase
+     **/
     modifier onlyOnSecondPhase(){
-        require(ph.phase2 >= block.number);
+        require(ph.phase2 >= block.number && ph.phase1 < block.number);
         _;
     }
     
+    /**
+     * Controlla che l'operazione avvenga nella giusta fase
+     **/
     modifier onlyOnThirdPhase(){
-        require(ph.phase3 >= block.number);
+        require(ph.phase3 >= block.number && ph.phase2 < block.number);
         _;
     }
     
+    /**
+     * Controlla che nonce e value coincidano coon quelli dell'hash mandato precedentemente
+     **/
     modifier openBid(uint256 _nonce, address _usr, uint256 _value){
         require(userToBidCommitment[_usr]== keccak256(abi.encodePacked(_nonce, _value)));
         _;
     }
     
+    /**
+     * Controlla che l'utente non abbia gia rivelato la sua offerta
+     **/
     modifier notAlreadyRevealed(address _usr){
         require(addressToBid[_usr] == 0);
         _;
     }
     
+    /**
+     * Controlla che il token sia arrivato
+     **/
     modifier tokenArrived(){
         require(balanceOf(address(this)) > 0);
         _;
     }
     
+    /**
+     * Controlla che l'asta non sia ancora iniziata
+     **/
     modifier auctionClosed(){
-        require(block.number > ph.phase3);
+        require(block.number > ph.phase3 && ph.phase1 > 0);
+        _;
+    }
+    
+     /**
+     * controlla che i prezzi siano maggiori di 0
+     **/
+    modifier minPrice(uint _resPrice, uint _sPrice){
+        require(_resPrice > 0 && _sPrice > 0);
+        _;
+    }
+    
+    /**
+     * controlla che la durata espressa in blocchi sia magiore di 0
+     **/
+    modifier minDuration(uint _duration1, uint _duration2, uint _duration3){
+        require(_duration1 > 0 && _duration2 > 0 && _duration3 > 0);
         _;
     }
     
@@ -109,140 +156,148 @@ contract Vickrey is ERC721, ERC721TokenReceiver {
     
     event bidAccepted(address user, uint256 price, uint256 block);
     event bidSent(address user, uint256 price, uint256 block);
-    event dutchCreated(address contractAddress, uint256 block);
+    event vickreyCreated(address contractAddress, uint256 block);
     event auctionStart(uint256 block);
+    event commitment(address user, uint block);
+    event withd(address user, uint block);
+    event bidRevealed(address user, uint block);
     
-    constructor(uint256 _phase1, uint256 _phase2, uint256 _phase3, uint256 _depositBid, uint256 _reservePrice, address payable _charityAddress, uint256 _tokenId) public{
+    constructor(uint256 _phase1, uint256 _phase2, uint256 _phase3, uint256 _depositBid, uint256 _reservePrice, address payable _charityAddress, uint256 _tokenId) minDuration(_phase1, _phase2, _phase3) minPrice(_reservePrice, _depositBid) public{
         creator = msg.sender;
         ph.phase1Duration = _phase1;
         ph.phase2Duration = _phase2;
         ph.phase3Duration = _phase3;
         ap.depositBid = _depositBid;
         ap.reservePrice = _reservePrice;
-        charityAddress = _charityAddress;        
-        //ut = new utilityToken();
+        charityAddress = _charityAddress;
         tokenId = _tokenId;
+        emit vickreyCreated(msg.sender, block.number);
     }
     
-    function startAuction() tokenArrived notAlreadyStarted public{
+    /**
+     * Da inizio all’asta, quindi vengono impostati blocchi di inizio e fine di ogni fase.
+     * Sono stati inseriti dei vincoli, infatti la funzione può essere invocata solo dal creator. 
+     * Può essere invocata solo una volta, infatti viene controllato che il blocco di inizio non sia ancora settato. 
+     * Infine l’asta non può partire finchè non viene inviato il token allo smart contract, questo vincolo è stato inserito per garantire lo scambio, 
+     * infatti in questo modo il contratto avrà funzione di escrow, prenderà il token del venditore e riceverà il pagamento dall’offerente, nel momento in cui 
+     * l’asta sarà conclusa effettuerà lo scambio.
+     * inoltre l’utiliizzo del token permette all’utente che entrerà a far parte dell’asta come offerente di poter controllare cosa sta effettivamente comprando.
+     **/
+    function startAuction() onlyCreator tokenArrived notAlreadyStarted public{
         ph.phase1 = block.number.add(ph.phase1Duration);
         ph.phase2 = block.number.add(ph.phase1Duration).add(ph.phase2Duration);
         ph.phase3 = block.number.add(ph.phase1Duration).add(ph.phase2Duration).add(ph.phase3Duration);
         emit auctionStart(block.number);
     }
     
-    //function bidCommitment(uint _nonce, uint _price) notAlreadyBid(msg.sender) onlyOnFirstPhase isDeposit payable external{
+    /**
+     * In questa fase gli utenti che partecipano all’asta devono inviare l’hash della propria offerta+nonce, 
+     * pagando anche il deposito settato in precedenza dal creator.
+     * L’hash non viene calcolato nello smart contract per evitare che vengano fatte transazioni con l’offerta “in chiaro”, 
+     * altrimenti gli altri utenti saprebbero quali sono le offerte da superare.Viene controllato che l’utente non abbia già inviato un’offerta, 
+     * che questa funzione venga chiamata solo nella sua fase e che il deposito che l’utente sta inviando coincida con quello impostato dall’utente.
+     **/
     function bidCommitment(bytes32 _commitment) notAlreadyBid(msg.sender) onlyOnFirstPhase isDeposit payable external{
-        //userToBidCommitment[msg.sender] = keccak256(abi.encodePacked(_nonce, _price));
         userToBidCommitment[msg.sender] = _commitment;
-        //addressToDepositBid[msg.sender] = msg.value;
+        emit commitment(msg.sender, block.number);
     }
     
-    function getCommitment() public view returns(bytes32){
-        return userToBidCommitment[msg.sender];
-    }
-    
-    function getHashCommitment(uint256 _nonce, uint256 _value) public returns(bytes32){
-        return keccak256(abi.encodePacked(_nonce, _value));
-    }
-    
+    /**
+     * In questa fase l’utente può decidere di tirarsi indietro ed ottenere la metà del deposito versato inizialmente. 
+     * Viene controllato che sia stato fatto il deposito precedentemente dall’utente e che questa funzione venga chiamata solo nella giusta fase.
+     **/
     function withdrawal() alreadyBid(msg.sender) onlyOnSecondPhase external{
-        //TODO mandare la metà del bid iniziale
-        //uint v = ap.depositBid.div(2);
         transferTo(msg.sender, ap.depositBid.div(2));
-        //userToBidCommitment[msg.sender] = 0;
+        emit withd(msg.sender, block.number);
     }
     
+    /**
+     * In questa fase gli utenti rivelano la propria offerta. Viene chiamata questa funzione passando come parametro il nonce e pagando il value inserito 
+     * nell’hash precedentemente. L’offerta viene accettata solo se l’hash del nonce + il value dell’offerta coincidono con l’hash mandato precedentemente. 
+     * Viene inoltre controllato che l’offerta non sia già stata rivelata, in modo da non permettere di mandare più soldi del previsto al contratto, 
+     * se l’utente ha mandato precedentemente l’hash e che la funzione venga chiamata solo nella giusta fase.Gli utenti che con le loro offerte non rientrano 
+     * nei primi 2 “classificati” vengono immediatamente rimborsati dell’amount dell’offerta e del deposito iniziale.
+     **/
     function revealBid(uint256 _nonce) onlyOnThirdPhase alreadyBid(msg.sender) openBid(_nonce, msg.sender, msg.value) notAlreadyRevealed(msg.sender) payable external{
-        addressToBid[msg.sender] == msg.value;
-        //bidder.push(msg.sender);
+        addressToBid[msg.sender] == msg.value; //l'utente viene aggiunto al mapping così da evitare che possa mandare di nuovo altri soldi
         if(msg.value > bBid.firstBid){
-            //refound al 2° che diventa terzo
-            //uint refound = bBid.secondBid.add(ap.depositBid);
-            transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+            if(bBid.secondAddress != address(0)){
+                transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+            }
             //il primo diventa secondo
             bBid.secondBid = bBid.firstBid;
             bBid.secondAddress = bBid.firstAddress;
-            //quello che ho appena guardato diventa primo
+            //quello attuale diventa primo
             bBid.firstBid = msg.value;
             bBid.firstAddress = msg.sender;
         } else if(msg.value >= bBid.secondBid){
             //refound al 2° che diventa terzo
             //gli viene restituito bid + deposito iniziale
-            //uint refound = bBid.secondBid.add(ap.depositBid);
-            transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
-            //quello che ho appena guardato diventa secondo
+            if(bBid.secondAddress != address(0)){
+                transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+            }
+            //quello attuale diventa secondo
             bBid.secondBid = msg.value;
             bBid.secondAddress = msg.sender;
         }
+        emit bidRevealed(msg.sender, block.number);
     }
     
-    function finalize() onlyCreator auctionClosed public{
-        //se nessuna delle puntate fatte supera il prezzo di riserva faccio refound a tutti
-        if(bBid.firstBid < ap.reservePrice){
-            //refound primo
-            transferTo(bBid.firstAddress, bBid.firstBid.add(ap.depositBid));
-            //refound secondo
-            transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
-            //refound creator del token
-            safeTransferFrom(address(this), creator, tokenId);
-        }else{ 
-            if(bBid.secondBid < ap.reservePrice)
-                bBid.secondBid = ap.reservePrice;//Se la seconda offerta è minore del prezzo di riserva la setto a prezzo di riserva
-                
-            //mando al creator l'ammontare della seconda offerta più alta
-            transferTo(creator, bBid.secondBid);
-            
-            //refound all'utente che si è aggiudicato l'asta il deposito iniziale + la sua offerta - la seconda offerta più alta dell'asta (quella pagata per la vincita)
-            //uint refoundFirst = bBid.firstBid.add(ap.depositBid).sub(bBid.secondBid);
-            transferTo(bBid.firstAddress, bBid.firstBid.add(ap.depositBid).sub(bBid.secondBid));
-            //trasferisco al vincitore il token
-            safeTransferFrom(address(this), bBid.firstAddress, tokenId);
-                
-            //refound del secondo utente
-            //uint refoundSecond = bBid.secondBid.add(ap.depositBid);
-            transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
-            
-            /*for(uint i = 0; i < bidder.length; i++){
-                address payable usr = bidder[i];
-                if(usr == bBid.firstAddress){
-                    //TODO mando bBid.secondBid
-                    transferTo(creator, bBid.secondBid);
-                    //TODO manda ad address la sua bid+deposito - second bid
-                    uint refound = bBid.firstBid.add(ap.depositBid).sub(bBid.secondBid);
-                    transferTo(usr, refound);
-                    transfer(address(this), bBid.firstAddress, tokenId);
-                }else{
-                    //TODO restituisci addressToBid[bid] + deposito
-                    //forse da togliere
-                    uint bid = addressToBid[usr];
-                    uint refound = bid.add(ap.depositBid);
-                    transferTo(usr, refound);
-                }
-            }*/
+    /**
+     * Permette di finalizzare l'asta e pagare/fare refound gli utenti
+     **/
+    function finalize() auctionClosed public{
+        if(bBid.firstBid == 0 && bBid.secondBid == 0){//nessuno partecipa all'asta
+            safeTransferFrom(address(this), creator, tokenId);   
+        }else if(bBid.secondBid == 0){//partecipa solo una persona
+            if(bBid.firstBid < ap.reservePrice){ //solo una persona ma non raggiunge il reserve price
+                transferTo(bBid.firstAddress, bBid.firstBid.add(ap.depositBid));
+                safeTransferFrom(address(this), creator, tokenId);
+            }else{ //reserve price raggiunto
+                transferTo(creator, ap.reservePrice);
+                safeTransferFrom(address(this), bBid.firstAddress, tokenId);
+                transferTo(bBid.firstAddress, bBid.firstBid.sub(ap.reservePrice).add(ap.depositBid));
+            }
+        }else{
+            if(bBid.firstBid < ap.reservePrice){//più persone ma reserve price non raggiunto
+                transferTo(bBid.firstAddress, bBid.firstBid.add(ap.depositBid));
+                transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+                safeTransferFrom(address(this), creator, tokenId);
+            }else if(bBid.secondBid < ap.reservePrice){ //solo il primo supera il reserve price
+                transferTo(creator, ap.reservePrice);
+                safeTransferFrom(address(this), bBid.firstAddress, tokenId);
+                transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+                transferTo(bBid.firstAddress, bBid.firstBid.sub(ap.reservePrice).add(ap.depositBid));
+            }else{
+                transferTo(creator, bBid.secondBid);
+                safeTransferFrom(address(this), bBid.firstAddress, tokenId);
+                transferTo(bBid.secondAddress, bBid.secondBid.add(ap.depositBid));
+                transferTo(bBid.firstAddress, bBid.firstBid.sub(bBid.secondBid).add(ap.depositBid));
+            }
         }
         uint256 balance = address(this).balance;
         if(balance > 0){
             transferTo(charityAddress, balance);
         }
+        closeContract();
     }
     
     function getPhase() public view returns(uint256){
         if(ph.phase1 == 0){
             return 0;
         }else{
-            if(block.number < ph.phase1)
+            if(block.number <= ph.phase1)
                 return 1;
-            else if(block.number < ph.phase2)
+            else if(block.number <= ph.phase2)
                 return 2;
-            else if(block.number < ph.phase3)
+            else if(block.number <= ph.phase3)
                 return 3;
             else 
                 return 4;
         }
     }
     
-    function closeContract() onlyCreator public{
+    function closeContract() internal{
         selfdestruct(address(0));
     }
     
@@ -258,6 +313,19 @@ contract Vickrey is ERC721, ERC721TokenReceiver {
         }
         return result;
     }
+    
+    function getFirstBid() public view returns(uint){
+        return bBid.firstBid;
+    }
+    
+    function getSecondBid() public view returns(uint){
+        return bBid.secondBid;
+    }
+    
+    function getDeposit() public view returns(uint){
+        return ap.depositBid;
+    }
+    
     
     function safeTransferFrom(address _from,address _to,uint256 _tokenId,bytes memory _data) public{
         mas.safeTransferFrom(_from, _to, _tokenId, _data);

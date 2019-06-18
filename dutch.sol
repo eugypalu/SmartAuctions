@@ -1,4 +1,4 @@
-pragma solidity ^0.5.1;
+pragma solidity ^0.5.6;
 
 import "./StrategyInterface.sol";
 import "./LinearDecrease.sol";
@@ -32,7 +32,7 @@ contract Dutch is StrategyInterface, ERC721, ERC721TokenReceiver{
     StaticDecrease sDec;
 
     //contract that manages the token
-    P2pToken mas = P2pToken(0xf8CA4fE2B0cA1Ef0537b5C1176c85B516a2446E4);
+    P2pToken mas = P2pToken(0xCFC03245Ca98b26455daB6F27c69DE6F10C1C3C4);
 
     uint decreaseMethod; //0 for linearDecrease 1 for PercDecrease 2 for staticdecrease
     
