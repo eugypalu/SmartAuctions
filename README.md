@@ -4,4 +4,4 @@ implementation of the following types of auctions:
 * English
 * Vickery\
 \
-for the exchange of non-fungible tokens on the Ethereum Blockchain
+For the exchange of non-fungible tokens on the Ethereum Blockchain
